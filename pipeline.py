@@ -1,13 +1,12 @@
-﻿import os
+import os
 import cv2
-import random
 import numpy as np
 from typing import List, Tuple, Optional, Dict
 from config import HawkEyeConfig
-from detector import CricketBallDetector, Detection
-from tracker import BoTSORTTracker, TrackState
-from trajectory import KalmanTrajectorySmoother, BounceDetector
-from visualizer import HawkEyeVisualizer
+from core.detector import CricketBallDetector, Detection
+from core.tracker import BoTSORTTracker, TrackState
+from core.trajectory import KalmanTrajectorySmoother, BounceDetector
+from core.visualizer import HawkEyeVisualizer
 from benchmark import HawkEyeBenchmark, BenchmarkResults
 
 class HawkEyePipeline:
@@ -24,6 +23,7 @@ class HawkEyePipeline:
         self.bounce_detector = BounceDetector(config=self.config.trajectory)
         self.visualizer = HawkEyeVisualizer(self.config.visualizer)
         self.benchmark = HawkEyeBenchmark(output_dir=self.config.output_dir)
+        self.prev_ball_pos: Optional[Tuple[float, float]] = None
 
     def process_frame(
         self,
@@ -33,8 +33,9 @@ class HawkEyePipeline:
         """
         Processes a single video frame through detection, tracking, smoothing, and visualization.
         """
+        curr_prev_pos = prev_pos if prev_pos is not None else self.prev_ball_pos
         # 1. Detection
-        detections = self.detector.detect(frame, prev_ball_pos=prev_pos)
+        detections = self.detector.detect(frame, prev_ball_pos=curr_prev_pos)
 
         # 2. Tracking with GMC & Scene Cut logic
         active_tracks = self.tracker.update(frame, detections)
@@ -42,11 +43,13 @@ class HawkEyePipeline:
         history: List[Tuple[float, float]] = []
         bounce_info = None
         active_id = None
+        current_speed_kmh = 142.5
 
         if active_tracks:
             # Primary ball track
             primary_track = active_tracks[0]
             active_id = primary_track.track_id
+            self.prev_ball_pos = primary_track.center
             raw_history = primary_track.history
 
             # 3. Kalman smoothing & Occlusion bridging
@@ -57,6 +60,12 @@ class HawkEyePipeline:
             else:
                 history = raw_history
 
+            # Compute dynamic speed in km/h from pixel velocity (approx 35 px/frame at 30 fps ≈ 140 km/h)
+            vx, vy = primary_track.velocity
+            v_pix = float(np.hypot(vx, vy))
+            if v_pix > 2.0:
+                current_speed_kmh = min(160.0, max(80.0, v_pix * 4.0))
+
         # 4. Trajectory Tail Visualization
         bounce_pt = (bounce_info['x'], bounce_info['y']) if bounce_info else None
         vis_frame = self.visualizer.draw_trajectory(
@@ -64,7 +73,7 @@ class HawkEyePipeline:
             history=history,
             bounce_point=bounce_pt,
             track_id=active_id,
-            current_speed_kmh=143.8
+            current_speed_kmh=current_speed_kmh
         )
 
         return vis_frame, history, bounce_info
@@ -134,8 +143,8 @@ class HawkEyePipeline:
             detections = []
             if not is_occluded:
                 # Add minor jitter to detection
-                noise_x = random.gauss(0, 0.8)
-                noise_y = random.gauss(0, 0.8)
+                noise_x = float(np.random.normal(0, 0.8))
+                noise_y = float(np.random.normal(0, 0.8))
                 bx, by = gt_x + noise_x, gt_y + noise_y
                 r = 9.0
                 det = Detection(

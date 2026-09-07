@@ -1,4 +1,4 @@
-﻿import os
+import os
 import cv2
 import time
 import argparse
@@ -18,23 +18,25 @@ class ThreadedVideoReader:
         self.video_path = video_path
         self.queue = queue.Queue(maxsize=queue_size)
         self.stopped = False
-        self.cap = cv2.VideoCapture(video_path)
-        self.thread = threading.Thread(target=self._read_frames, daemon=True)
 
     def start(self):
-        self.thread.start()
+        t = threading.Thread(target=self._worker, daemon=True)
+        t.start()
         return self
 
-    def _read_frames(self):
-        while not self.stopped and self.cap.isOpened():
-            ret, frame = self.cap.read()
+    def _worker(self):
+        cap = cv2.VideoCapture(self.video_path)
+        while not self.stopped:
+            ret, frame = cap.read()
             if not ret:
                 self.queue.put(None)
                 break
             self.queue.put(frame)
-        self.cap.release()
+        cap.release()
 
     def get_frame(self) -> Optional[np.ndarray]:
+        if self.stopped:
+            return None
         return self.queue.get()
 
     def stop(self):
@@ -80,23 +82,51 @@ def run_cli_pipeline(
         batsman_hand = BatsmanHand.RIGHT_HAND if handedness == "RHB" else BatsmanHand.LEFT_HAND
         on_field = OnFieldCall.OUT if umpire_call == "OUT" else OnFieldCall.NOT_OUT
 
-        verdict = drs_engine.evaluate_lbw(
-            bounce_point=bounce_3d,
-            pad_impact_point=pad_3d,
-            predicted_stump_point=stump_3d,
-            batsman_hand=batsman_hand,
-            on_field_call=on_field
-        )
+        verdict = None
+        if enable_drs:
+            verdict = drs_engine.evaluate_lbw(
+                bounce_point=bounce_3d,
+                pad_impact_point=pad_3d,
+                predicted_stump_point=stump_3d,
+                batsman_hand=batsman_hand,
+                on_field_call=on_field
+            )
 
-        banner_path = os.path.join(output_dir, "drs_banner.png")
-        drs_engine.render_drs_banner(verdict, save_path=banner_path)
+            banner_path = os.path.join(output_dir, "drs_banner.png")
+            drs_engine.render_drs_banner(verdict, save_path=banner_path)
 
-        print(f"\n[DRS Adjudication Result]")
-        print(f" -> Pitching: {verdict.pitching.value}")
-        print(f" -> Impact:   {verdict.impact.value}")
-        print(f" -> Wickets:  {verdict.wickets.value}")
-        print(f" -> FINAL VERDICT: {verdict.final_verdict} ({verdict.reasons})")
-        print(f" -> DRS Banner Saved: {banner_path}")
+            print(f"\n[DRS Adjudication Result]")
+            print(f" -> Pitching: {verdict.pitching.value}")
+            print(f" -> Impact:   {verdict.impact.value}")
+            print(f" -> Wickets:  {verdict.wickets.value}")
+            print(f" -> FINAL VERDICT: {verdict.final_verdict} ({verdict.reasons})")
+            print(f" -> DRS Banner Saved: {banner_path}")
+
+        if plot_3d:
+            vis_3d = Plotly3DVisualizer()
+            pre_bounce_pts = np.array([
+                [0.1, 1.5, 2.15],
+                [gx * 0.5, gy * 0.5, 1.2],
+                bounce_3d
+            ], dtype=np.float64)
+            post_bounce_pts = np.array([
+                bounce_3d,
+                ((bounce_3d[0] + pad_3d[0]) / 2.0, (bounce_3d[1] + pad_3d[1]) / 2.0, 0.25),
+                pad_3d
+            ], dtype=np.float64)
+
+            fig = vis_3d.build_3d_pitch_figure(
+                pre_bounce_traj=pre_bounce_pts,
+                post_bounce_traj=post_bounce_pts,
+                projected_traj=proj_arr,
+                bounce_point=bounce_3d,
+                impact_point=pad_3d,
+                stump_impact=stump_3d,
+                verdict=verdict
+            )
+            html_out = os.path.join(output_dir, "3d_pitch_visualization.html")
+            fig.write_html(html_out)
+            print(f" -> Interactive 3D HTML: {html_out}")
         return
 
     # 2. Process real input video file
@@ -132,9 +162,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Hawk-Eye 3D Cricket Ball Tracking & DRS")
     parser.add_argument("--input", type=str, default=None, help="Path to input cricket video")
     parser.add_argument("--output", type=str, default="output", help="Directory for output artifacts")
-    parser.add_argument("--drs", action="store_true", default=True, help="Enable DRS LBW adjudication")
-    parser.add_argument("--plot-3d", action="store_true", default=True, help="Generate interactive 3D plot")
-    parser.add_argument("--threaded", action="store_true", default=True, help="Use multi-threaded frame queue")
+    parser.add_argument("--no-drs", action="store_false", dest="drs", default=True, help="Disable DRS LBW adjudication")
+    parser.add_argument("--no-plot-3d", action="store_false", dest="plot_3d", default=True, help="Disable interactive 3D plot")
+    parser.add_argument("--no-threaded", action="store_false", dest="threaded", default=True, help="Disable multi-threaded frame queue")
     parser.add_argument("--handedness", type=str, default="RHB", choices=["RHB", "LHB"], help="Batsman Handedness")
     parser.add_argument("--umpire-call", type=str, default="NOT OUT", choices=["OUT", "NOT OUT"], help="On-field Umpire Call")
     parser.add_argument("--simulate", action="store_true", help="Run full synthetic broadcast demo")

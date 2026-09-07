@@ -1,4 +1,4 @@
-﻿import numpy as np
+import numpy as np
 import cv2
 import os
 from enum import Enum
@@ -184,8 +184,12 @@ class DRSEngine:
             final_verdict = "NOT OUT"
             reasons = "Predicted path missing stumps."
         else:
+            # Check Close Proximity Rule (distance from bounce to impact < 40cm)
+            if is_close_proximity and on_field_call == OnFieldCall.NOT_OUT:
+                final_verdict = "NOT OUT"
+                reasons = "Impact within 40cm of pitch. Umpire's Call on prediction. On-field NOT OUT upheld."
             # Check 3-Meter Law: Protects batsman on borderline/clipping decisions
-            if is_3_meter_rule and on_field_call == OnFieldCall.NOT_OUT:
+            elif is_3_meter_rule and on_field_call == OnFieldCall.NOT_OUT:
                 if (wickets == WicketsResult.UMPIRES_CALL) or (abs_sx > (stump_edge * 0.75)):
                     final_verdict = "NOT OUT"
                     reasons = f"ICC 3-Meter Law applies ({dist_to_stumps:.2f}m from stumps). On-field NOT OUT upheld."

@@ -1,6 +1,6 @@
-﻿import numpy as np
+import numpy as np
 import pytest
-from detector import CricketBallDetector, Detection
+from core.detector import CricketBallDetector, Detection
 from config import DetectorConfig
 
 def test_detector_valid_ball():

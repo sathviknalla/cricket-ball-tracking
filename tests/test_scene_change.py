@@ -1,8 +1,8 @@
-﻿import numpy as np
+import numpy as np
 import cv2
 import pytest
-from tracker import SceneChangeDetector, BoTSORTTracker, Track, TrackState
-from detector import Detection
+from core.tracker import SceneChangeDetector, BoTSORTTracker, Track, TrackState
+from core.detector import Detection
 
 def test_scene_change_detector_direct():
     """

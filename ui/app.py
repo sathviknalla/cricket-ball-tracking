@@ -1,4 +1,4 @@
-﻿import os
+import os
 import cv2
 import random
 import numpy as np
@@ -159,7 +159,7 @@ with tab1:
 with tab2:
     st.subheader("Official Decision Review System (DRS)")
     banner_img = drs_engine.render_drs_banner(verdict, save_path="output/drs_banner.png")
-    st.image(banner_img, channels="BGR", use_column_width=True)
+    st.image(banner_img, channels="BGR", use_container_width=True)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("1. Pitching", verdict.pitching.value, f"X = {verdict.pitching_coord[0]:.2f}m")

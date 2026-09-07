@@ -1,6 +1,6 @@
-﻿import numpy as np
+import numpy as np
 import pytest
-from trajectory import KalmanTrajectorySmoother
+from core.trajectory import KalmanTrajectorySmoother
 from config import TrajectoryConfig
 
 def test_kalman_linear_occlusion():

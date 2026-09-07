@@ -1,4 +1,4 @@
-﻿import os
+import os
 import cv2
 import random
 import numpy as np
@@ -25,7 +25,7 @@ class SyntheticCricketBallDataset:
             self.transform = A.Compose([
                 A.MotionBlur(blur_limit=15, p=0.8),
                 A.RandomBrightnessContrast(p=0.5),
-                A.GaussNoise(var_limit=(10.0, 50.0), p=0.4),
+                A.GaussNoise(p=0.4),
                 A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, p=0.4)
             ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
         else:

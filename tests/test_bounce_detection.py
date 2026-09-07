@@ -1,6 +1,6 @@
-﻿import numpy as np
+import numpy as np
 import pytest
-from trajectory import BounceDetector
+from core.trajectory import BounceDetector
 from config import TrajectoryConfig
 
 def test_bounce_detection_v_shape():

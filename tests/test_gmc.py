@@ -1,7 +1,7 @@
-﻿import numpy as np
+import numpy as np
 import cv2
 import pytest
-from tracker import GMC
+from core.tracker import GMC
 
 def test_gmc_identity_on_static_frames():
     gmc = GMC()

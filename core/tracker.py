@@ -1,10 +1,11 @@
-﻿import numpy as np
+import numpy as np
 import cv2
 from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass, field
 from enum import Enum
+from scipy.optimize import linear_sum_assignment
 from config import TrackerConfig
-from detector import Detection
+from core.detector import Detection
 
 class TrackState(Enum):
     Tentative = 1
@@ -259,7 +260,7 @@ class BoTSORTTracker:
                     norm_v = np.hypot(vx, vy) + 1e-6
                     cos_sim = (vx * pred_dx + vy * pred_dy) / (norm_v * norm_pred)
                     if cos_sim < 0.0:  # Moving in opposite direction
-                        dist += 50.0
+                        dist += getattr(self.config, 'velocity_alignment_penalty', 50.0)
 
                 cost_matrix[i, j] = dist
         return cost_matrix
@@ -290,32 +291,31 @@ class BoTSORTTracker:
         high_dets = [d for d in detections if d.confidence >= self.config.track_high_thresh]
         low_dets = [d for d in detections if self.config.track_low_thresh <= d.confidence < self.config.track_high_thresh]
 
-        # 4. First Association (High Confidence detections)
+        # 4. First Association (High Confidence detections via Hungarian Algorithm)
         active_tracks = [t for t in self.tracks if t.state in (TrackState.Confirmed, TrackState.Tentative)]
         matched_tracks = set()
         matched_dets = set()
 
         if active_tracks and high_dets:
             cost_matrix = self._compute_cost_matrix(active_tracks, high_dets)
-            # Greedy matching within gating distance
-            for i in range(len(active_tracks)):
-                min_idx = int(np.argmin(cost_matrix[i]))
-                min_val = cost_matrix[i, min_idx]
-                if min_val <= 120.0 and min_idx not in matched_dets:
-                    active_tracks[i].update(high_dets[min_idx], self.frame_idx)
-                    matched_tracks.add(active_tracks[i])
-                    matched_dets.add(min_idx)
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+            high_gate = getattr(self.config, 'high_conf_gating_dist', 120.0)
+            for r, c in zip(row_ind, col_ind):
+                if cost_matrix[r, c] <= high_gate:
+                    active_tracks[r].update(high_dets[c], self.frame_idx)
+                    matched_tracks.add(active_tracks[r])
+                    matched_dets.add(c)
 
-        # 5. Second Association (Low Confidence / Motion Blur streak detections)
+        # 5. Second Association (Low Confidence / Motion Blur streak detections via Hungarian Algorithm)
         unmatched_tracks = [t for t in active_tracks if t not in matched_tracks]
         if unmatched_tracks and low_dets:
             low_cost_mat = self._compute_cost_matrix(unmatched_tracks, low_dets)
-            for i in range(len(unmatched_tracks)):
-                min_idx = int(np.argmin(low_cost_mat[i]))
-                min_val = low_cost_mat[i, min_idx]
-                if min_val <= 90.0:  # Stricter spatial gate for low-conf motion blur
-                    unmatched_tracks[i].update(low_dets[min_idx], self.frame_idx)
-                    matched_tracks.add(unmatched_tracks[i])
+            row_ind, col_ind = linear_sum_assignment(low_cost_mat)
+            low_gate = getattr(self.config, 'low_conf_gating_dist', 90.0)
+            for r, c in zip(row_ind, col_ind):
+                if low_cost_mat[r, c] <= low_gate:
+                    unmatched_tracks[r].update(low_dets[c], self.frame_idx)
+                    matched_tracks.add(unmatched_tracks[r])
 
         # 6. Mark unmatched tracks as missed
         for t in self.tracks:

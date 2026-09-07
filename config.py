@@ -1,4 +1,4 @@
-﻿from dataclasses import dataclass, field
+from dataclasses import dataclass, field
 from typing import Tuple, List, Optional
 
 @dataclass
@@ -25,6 +25,10 @@ class TrackerConfig:
     new_track_thresh: float = 0.40
     track_buffer: int = 30
     match_thresh: float = 0.70
+    high_conf_gating_dist: float = 120.0
+    low_conf_gating_dist: float = 90.0
+    max_lost_time: int = 30
+    velocity_alignment_penalty: float = 50.0
     gmc_method: str = "sparse_optical_flow"  # or 'orb', 'sift'
     gmc_max_features: int = 400
     scene_change_threshold: float = 0.65  # Histogram distance threshold
@@ -39,6 +43,9 @@ class TrajectoryConfig:
     max_occlusion_frames: int = 15
     bounce_peak_prominence: float = 3.0
     bounce_peak_distance: int = 10
+    restitution_coeff: float = 0.65
+    drag_coeff: float = 0.0070
+    dt_3d: float = 1.0 / 30.0
 
 @dataclass
 class VisualizerConfig:
