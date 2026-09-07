@@ -207,11 +207,12 @@ class Plotly3DVisualizer:
         bounce_point: Optional[Tuple[float, float, float]] = None,
         impact_point: Optional[Tuple[float, float, float]] = None,
         stump_impact: Optional[Tuple[float, float, float]] = None,
-        verdict: Optional[DRSVerdict] = None
+        verdict: Optional[DRSVerdict] = None,
+        confidence_cone_radii: Optional[List[Tuple[float, float]]] = None
     ) -> go.Figure:
         """
         Constructs an interactive 3D scene containing the metric pitch surface,
-        both sets of wickets, crease lines, and segmented ball trajectories.
+        both sets of wickets, crease lines, segmented ball trajectories, and 3D confidence cone.
         """
         fig = go.Figure()
         pw = self.dims.half_width  # 1.524m
@@ -293,6 +294,26 @@ class Plotly3DVisualizer:
                 name='DRS Projected Path'
             ))
 
+            # 3D Uncertainty / Confidence Cone Boundary
+            if confidence_cone_radii is not None and len(confidence_cone_radii) == len(projected_traj):
+                upper_x, upper_z, lower_x, lower_z = [], [], [], []
+                for pt, (rx, rz) in zip(projected_traj, confidence_cone_radii):
+                    upper_x.append(pt[0] + rx)
+                    upper_z.append(pt[2] + rz)
+                    lower_x.append(pt[0] - rx)
+                    lower_z.append(max(0.0, pt[2] - rz))
+
+                fig.add_trace(go.Scatter3d(
+                    x=upper_x, y=projected_traj[:, 1], z=upper_z,
+                    mode='lines', line=dict(color='rgba(239, 68, 68, 0.35)', width=2),
+                    name='95% Confidence Upper Bound'
+                ))
+                fig.add_trace(go.Scatter3d(
+                    x=lower_x, y=projected_traj[:, 1], z=lower_z,
+                    mode='lines', line=dict(color='rgba(239, 68, 68, 0.35)', width=2),
+                    name='95% Confidence Lower Bound'
+                ))
+
         # 5. Key Impact Markers
         if bounce_point is not None:
             fig.add_trace(go.Scatter3d(
@@ -336,3 +357,95 @@ class Plotly3DVisualizer:
             legend=dict(x=0.02, y=0.95, bgcolor='rgba(15, 23, 42, 0.8)')
         )
         return fig
+
+    @staticmethod
+    def build_velocity_timeline_figure(
+        y_coords: np.ndarray,
+        speeds_kmh: List[float],
+        bounce_y: Optional[float] = None,
+        impact_y: Optional[float] = None
+    ) -> go.Figure:
+        """
+        Renders a 2D line plot showing ball deceleration along the pitch length (0 to 20.12m).
+        """
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=y_coords,
+            y=speeds_kmh,
+            mode='lines+markers',
+            line=dict(color='#10b981', width=3),
+            marker=dict(size=4, color='#34d399'),
+            name='Ball Speed (km/h)'
+        ))
+
+        if bounce_y is not None:
+            fig.add_vline(x=bounce_y, line_width=1.5, line_dash="dash", line_color="#f59e0b",
+                          annotation_text="Bounce", annotation_position="top left")
+        if impact_y is not None:
+            fig.add_vline(x=impact_y, line_width=1.5, line_dash="dash", line_color="#ef4444",
+                          annotation_text="Pad Impact", annotation_position="top right")
+
+        fig.update_layout(
+            template='plotly_dark',
+            title="Velocity Telemetry & Drag Decay Curve",
+            xaxis_title="Pitch Length Y (meters)",
+            yaxis_title="Speed (km/h)",
+            height=320,
+            margin=dict(l=40, r=20, t=40, b=30),
+            paper_bgcolor='#0f172a',
+            plot_bgcolor='#1e293b'
+        )
+        return fig
+
+    @staticmethod
+    def build_pitch_heatmap_figure(
+        density_matrix: np.ndarray,
+        deliveries: List[Tuple[float, float]]
+    ) -> go.Figure:
+        """
+        Renders 2D interactive spatial density heatmap of bowling pitch landing zones.
+        """
+        fig = go.Figure()
+        
+        # 2D Heatmap surface
+        y_axis = np.linspace(0, 20.12, density_matrix.shape[0])
+        x_axis = np.linspace(-1.524, 1.524, density_matrix.shape[1])
+
+        fig.add_trace(go.Heatmap(
+            z=density_matrix,
+            x=x_axis,
+            y=y_axis,
+            colorscale='Viridis',
+            opacity=0.85,
+            showscale=True,
+            name='Density Heatmap'
+        ))
+
+        # Scatter dots of individual deliveries
+        if deliveries:
+            dxs = [d[0] for d in deliveries]
+            dys = [d[1] for d in deliveries]
+            fig.add_trace(go.Scatter(
+                x=dxs, y=dys,
+                mode='markers',
+                marker=dict(size=7, color='#f43f5e', line=dict(color='white', width=1)),
+                name='Pitch Bounce Points'
+            ))
+
+        # Zone Lines
+        for zy, zlabel in [(8.0, "Short"), (10.0, "Back of Length"), (13.5, "Good Length"), (16.5, "Full"), (20.12, "Crease")]:
+            fig.add_hline(y=zy, line_width=1, line_dash="dot", line_color="#94a3b8",
+                          annotation_text=zlabel, annotation_position="bottom right")
+
+        fig.update_layout(
+            template='plotly_dark',
+            title="2D Bowling Spell Pitch Heatmap & Length Distribution",
+            xaxis_title="Pitch Width X (m)",
+            yaxis_title="Pitch Length Y (m)",
+            height=450,
+            paper_bgcolor='#0f172a',
+            plot_bgcolor='#1e293b',
+            yaxis=dict(autorange='reversed') # Bowler at top, batsman at bottom
+        )
+        return fig
+

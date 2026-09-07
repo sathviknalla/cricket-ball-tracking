@@ -468,6 +468,63 @@ class Kalman3DSmoother:
         return float(angle_post - angle_pre)
 
     @staticmethod
+    def compute_magnus_force(
+        velocity: Tuple[float, float, float],
+        spin_rpm: float = 1800.0,
+        spin_axis: Tuple[float, float, float] = (0.0, 0.0, 1.0),
+        air_density: float = 1.225,
+        ball_radius: float = 0.036,
+        ball_mass: float = 0.160
+    ) -> Tuple[float, float, float]:
+        """
+        Computes the Magnus aerodynamic lift/drift force vector acting on spinning ball.
+        F_magnus = 0.5 * C_L * rho * A * (omega x v) / |omega|
+        """
+        omega_mag = (spin_rpm * 2.0 * np.pi) / 60.0 # rad/s
+        axis_norm = np.linalg.norm(spin_axis)
+        if axis_norm < 1e-6 or omega_mag < 1e-6:
+            return (0.0, 0.0, 0.0)
+
+        omega_vec = (np.array(spin_axis) / axis_norm) * omega_mag
+        v_vec = np.array(velocity, dtype=np.float64)
+        v_mag = np.linalg.norm(v_vec)
+        if v_mag < 1e-3:
+            return (0.0, 0.0, 0.0)
+
+        # Non-dimensional spin parameter S = (r * omega) / v
+        spin_param = (ball_radius * omega_mag) / v_mag
+        # Lift coefficient empirical approximation: C_L ≈ min(0.35, 0.5 * spin_param)
+        c_lift = min(0.35, 0.5 * spin_param)
+        area = np.pi * (ball_radius ** 2)
+
+        # Force direction: omega x v
+        cross_prod = np.cross(omega_vec, v_vec)
+        cross_norm = np.linalg.norm(cross_prod)
+        if cross_norm < 1e-6:
+            return (0.0, 0.0, 0.0)
+
+        dir_vec = cross_prod / cross_norm
+        f_mag = 0.5 * c_lift * air_density * area * (v_mag ** 2)
+        f_vec = (dir_vec * f_mag) / ball_mass # acceleration m/s^2
+
+        return (float(f_vec[0]), float(f_vec[1]), float(f_vec[2]))
+
+    @staticmethod
+    def compute_confidence_ellipsoid(
+        distance_projected: float,
+        initial_sigma_x: float = 0.008,
+        initial_sigma_z: float = 0.012
+    ) -> Tuple[float, float]:
+        """
+        Estimates the 95% confidence error cone (sigma_x, sigma_z in meters)
+        at stump distance based on projection distance and tracking covariance.
+        """
+        growth_factor = 1.0 + 0.035 * (distance_projected ** 1.4)
+        sigma_x = initial_sigma_x * growth_factor
+        sigma_z = initial_sigma_z * growth_factor
+        return (float(sigma_x), float(sigma_z))
+
+    @staticmethod
     def project_to_stumps(
         impact_point: Tuple[float, float, float],
         velocity: Tuple[float, float, float],
@@ -513,3 +570,87 @@ class Kalman3DSmoother:
 
         pts[-1] = stump_impact
         return np.array(pts, dtype=np.float64), stump_impact
+
+    @classmethod
+    def project_to_stumps_advanced(
+        cls,
+        impact_point: Tuple[float, float, float],
+        velocity: Tuple[float, float, float],
+        target_y: float = 20.12,
+        fps: float = 30.0,
+        gravity: float = 9.81,
+        drag_coeff: float = 0.0070,
+        spin_rpm: float = 0.0,
+        spin_axis: Tuple[float, float, float] = (0.0, 0.0, 1.0)
+    ) -> Dict:
+        """
+        Advanced forward projection incorporating:
+        - Aerodynamic drag and Magnus effect lift/drift
+        - 3D confidence error cones (sigma_x, sigma_z)
+        - Full speed deceleration profile timeline
+        """
+        x, y, z = impact_point
+        vx, vy, vz = velocity
+        dt = 1.0 / fps
+
+        if vy <= 1.0:
+            vy = 30.0
+
+        pts = [(x, y, z)]
+        speed_timeline = [float(np.hypot(vx, np.hypot(vy, vz)) * 3.6)] # km/h
+        cone_radii = [(0.015, 0.015)]
+
+        dist_total = max(0.1, target_y - y)
+
+        while y < target_y:
+            x += vx * dt
+            y += vy * dt
+            z += vz * dt - 0.5 * gravity * (dt ** 2)
+
+            v_mag = np.hypot(vx, np.hypot(vy, vz))
+            drag_x = -drag_coeff * v_mag * vx
+            drag_y = -drag_coeff * v_mag * vy
+            drag_z = -drag_coeff * v_mag * vz - gravity
+
+            if abs(spin_rpm) > 10.0:
+                mag_ax, mag_ay, mag_az = cls.compute_magnus_force(
+                    velocity=(vx, vy, vz),
+                    spin_rpm=spin_rpm,
+                    spin_axis=spin_axis
+                )
+                drag_x += mag_ax
+                drag_y += mag_ay
+                drag_z += mag_az
+
+            vx += drag_x * dt
+            vy += drag_y * dt
+            vz += drag_z * dt
+
+            current_dist = max(0.0, y - impact_point[1])
+            sig_x, sig_z = cls.compute_confidence_ellipsoid(current_dist)
+            cone_radii.append((sig_x, sig_z))
+
+            pts.append((x, min(target_y, y), max(0.0, z)))
+            speed_timeline.append(float(v_mag * 3.6))
+
+        last_pt = pts[-1]
+        second_last = pts[-2] if len(pts) >= 2 else (x, y, z)
+
+        y1, y2 = second_last[1], last_pt[1]
+        span_y = max(1e-5, y2 - y1)
+        interp_factor = (target_y - y1) / span_y
+
+        exact_x = second_last[0] + interp_factor * (last_pt[0] - second_last[0])
+        exact_z = second_last[2] + interp_factor * (last_pt[2] - second_last[2])
+        stump_impact = (float(exact_x), float(target_y), float(max(0.0, exact_z)))
+        pts[-1] = stump_impact
+
+        final_sigma_x, final_sigma_z = cls.compute_confidence_ellipsoid(dist_total)
+
+        return {
+            "trajectory": np.array(pts, dtype=np.float64),
+            "stump_impact": stump_impact,
+            "confidence_cone": (final_sigma_x, final_sigma_z),
+            "speed_timeline_kmh": speed_timeline,
+            "cone_radii": cone_radii
+        }
