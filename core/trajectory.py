@@ -14,7 +14,8 @@ class Kalman3DConfig:
 class Kalman3DSmoother:
     """
     6-State 3D Kalman Filter [X, Y, Z, vx, vy, vz] for 3D trajectory tracking,
-    gravitational physics modeling, and multi-frame occlusion bridging.
+    gravitational physics modeling, multi-frame occlusion bridging,
+    bat-edge deflection detection, and seam/spin deviation estimation.
     """
     def __init__(self, config: Optional[Kalman3DConfig] = None):
         self.config = config or Kalman3DConfig()
@@ -72,7 +73,6 @@ class Kalman3DSmoother:
         if not self.initialized:
             return (0.0, 0.0, 0.0)
 
-        # State transition + gravity control
         self.x = self.F @ self.x + self.Bu
         self.P = self.F @ self.P @ self.F.T + self.Q
         return (float(self.x[0, 0]), float(self.x[1, 0]), float(self.x[2, 0]))
@@ -84,14 +84,11 @@ class Kalman3DSmoother:
             self.init_state(measurement)
             return measurement
 
-        # Prior prediction
         self.predict()
 
-        # Kalman gain
         S = self.H @ self.P @ self.H.T + self.R
         K = self.P @ self.H.T @ np.linalg.inv(S)
 
-        # Update
         residual = z - (self.H @ self.x)
         self.x = self.x + K @ residual
         I = np.eye(self.state_dim, dtype=np.float64)
@@ -110,14 +107,12 @@ class Kalman3DSmoother:
         if not points:
             return np.empty((0, 3), dtype=np.float64)
 
-        # Collect early valid points to compute robust initial velocity with gravity compensation
         valid_indices = [i for i, p in enumerate(points) if p is not None]
         if not valid_indices:
             return np.zeros((len(points), 3), dtype=np.float64)
 
         first_valid_idx = valid_indices[0]
 
-        # Use first few valid points to estimate initial velocity
         if len(valid_indices) >= 2:
             second_idx = valid_indices[min(3, len(valid_indices) - 1)]
             dt_span = (second_idx - first_valid_idx) * self.dt
@@ -126,7 +121,6 @@ class Kalman3DSmoother:
             
             vx_init = (p2[0] - p1[0]) / dt_span
             vy_init = (p2[1] - p1[1]) / dt_span
-            # Account for gravity acceleration in vertical velocity estimation: delta_z = vz*dt - 0.5*g*dt^2
             vz_init = (p2[2] - p1[2] + 0.5 * self.g * (dt_span ** 2)) / dt_span
             init_vel = (vx_init, vy_init, vz_init)
         else:
@@ -147,6 +141,58 @@ class Kalman3DSmoother:
             filtered.append(np.array(smooth_pt, dtype=np.float64))
 
         return np.array(filtered, dtype=np.float64)
+
+    @staticmethod
+    def detect_bat_deflection(
+        trajectory_3d: np.ndarray,
+        threshold_angle_deg: float = 4.5,
+        min_y_check: float = 16.0
+    ) -> Tuple[bool, Optional[int]]:
+        """
+        Detects sudden non-gravitational trajectory angle discontinuities / velocity spikes
+        characteristic of an inside or outside bat edge near the batting crease.
+        Returns:
+            (is_bat_edge_detected, deflection_frame_index)
+        """
+        if trajectory_3d is None or len(trajectory_3d) < 4:
+            return False, None
+
+        vels = np.diff(trajectory_3d, axis=0)
+        n_steps = len(vels)
+
+        for i in range(1, n_steps):
+            y_pos = trajectory_3d[i, 1]
+            z_pos = trajectory_3d[i, 2]
+
+            # Check in the batsman strike zone (Y >= 16.0m and above ground Z > 0.08m)
+            if y_pos >= min_y_check and z_pos > 0.08:
+                v1 = vels[i - 1]
+                v2 = vels[i]
+                norm1 = np.linalg.norm(v1) + 1e-6
+                norm2 = np.linalg.norm(v2) + 1e-6
+
+                cos_theta = np.clip(np.dot(v1, v2) / (norm1 * norm2), -1.0, 1.0)
+                angle_deg = np.degrees(np.arccos(cos_theta))
+
+                if angle_deg >= threshold_angle_deg:
+                    return True, i
+
+        return False, None
+
+    @staticmethod
+    def compute_seam_spin_deviation(
+        pre_bounce_vel: Tuple[float, float, float],
+        post_bounce_vel: Tuple[float, float, float]
+    ) -> float:
+        """
+        Calculates horizontal trajectory deflection angle (in degrees) off the pitch.
+        """
+        vx_pre, vy_pre, _ = pre_bounce_vel
+        vx_post, vy_post, _ = post_bounce_vel
+
+        angle_pre = np.degrees(np.arctan2(vx_pre, max(0.1, vy_pre)))
+        angle_post = np.degrees(np.arctan2(vx_post, max(0.1, vy_post)))
+        return float(angle_post - angle_pre)
 
     @staticmethod
     def project_to_stumps(
@@ -173,12 +219,10 @@ class Kalman3DSmoother:
 
         pts = [(x, y, z)]
         while y < target_y:
-            # Update position
             x += vx * dt
             y += vy * dt
             z += vz * dt - 0.5 * gravity * (dt ** 2)
 
-            # Update velocity with gravity and aerodynamic drag
             v_mag = np.hypot(vx, np.hypot(vy, vz))
             drag_x = -drag_coeff * v_mag * vx
             drag_y = -drag_coeff * v_mag * vy
@@ -190,7 +234,6 @@ class Kalman3DSmoother:
 
             pts.append((x, min(target_y, y), max(0.0, z)))
 
-        # Exact linear interpolation to hit target_y precisely
         last_pt = pts[-1]
         second_last = pts[-2] if len(pts) >= 2 else (x, y, z)
 
