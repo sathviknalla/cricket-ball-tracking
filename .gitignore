@@ -32,9 +32,6 @@ env/
 .coverage
 htmlcov/
 
-# Output videos (large binaries)
-output/*.mp4
-
 # OS
 .DS_Store
 Thumbs.db
