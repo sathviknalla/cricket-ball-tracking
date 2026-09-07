@@ -31,12 +31,10 @@ class MetricPitchCalibration:
         self.rvec: Optional[np.ndarray] = None
         self.tvec: Optional[np.ndarray] = None
 
-        # Default synthetic calibration setup
         self._init_default_synthetic_homography()
 
     def _init_default_synthetic_homography(self):
         """Initializes a calibrated homography for standard broadcast angle."""
-        # 4 Key reference points on pitch plane (Z=0) in meters: [X, Y]
         pitch_pts = np.array([
             [-self.dims.return_crease_half_width, self.dims.bowling_popping_crease],  # Top-left (Bowler end)
             [self.dims.return_crease_half_width, self.dims.bowling_popping_crease],   # Top-right
@@ -44,7 +42,6 @@ class MetricPitchCalibration:
             [-self.dims.return_crease_half_width, self.dims.batting_popping_crease]   # Bottom-left
         ], dtype=np.float32)
 
-        # Standard broadcast perspective view (1280x720)
         img_pts = np.array([
             [380.0, 180.0],
             [900.0, 180.0],
@@ -120,6 +117,7 @@ class MetricPitchCalibration:
 
         dt = 1.0 / fps
         traj_3d = np.zeros((n_pts, 3), dtype=np.float64)
+        r = self.dims.ball_radius
 
         # 1. Project ground (X, Y) coordinates via homography
         for i, (u, v) in enumerate(pixel_trajectory):
@@ -128,31 +126,28 @@ class MetricPitchCalibration:
             traj_3d[i, 1] = gy
 
         # 2. Physics-based vertical Z reconstruction
-        # Pre-bounce phase: projectile flight Z(t) = Z0 + vz0*t - 0.5*g*t^2 with Z(t_bounce) = 0
         b_idx = max(1, min(bounce_frame_idx, n_pts - 2))
         t_bounce = b_idx * dt
         
-        # Initial vertical velocity vz0 to hit ground at t_bounce
-        # 0 = release_height + vz0*t_bounce - 0.5*g*t_bounce^2  =>  vz0 = (0.5*g*t_bounce^2 - release_height) / t_bounce
-        vz0 = (0.5 * gravity * (t_bounce ** 2) - release_height) / t_bounce
+        # Center of ball reaches height r at bounce
+        vz0 = ((r - release_height) + 0.5 * gravity * (t_bounce ** 2)) / t_bounce
 
         for i in range(b_idx + 1):
             t = i * dt
             z = release_height + vz0 * t - 0.5 * gravity * (t ** 2)
-            traj_3d[i, 2] = max(0.0, float(z))
+            traj_3d[i, 2] = max(r, float(z))
 
-        # Bounce point
-        traj_3d[b_idx, 2] = 0.0
+        # Bounce point center
+        traj_3d[b_idx, 2] = r
 
-        # Post-bounce phase: Rebounding flight Z(t) = vz_rebound * dt_post - 0.5 * g * dt_post^2
-        # Vertical speed just before bounce
-        vz_pre = vz0 - gravity * t_bounce  # negative (downward)
-        restitution_coeff = 0.65            # Standard cricket pitch restitution
+        # Post-bounce phase
+        vz_pre = vz0 - gravity * t_bounce
+        restitution_coeff = 0.65
         vz_rebound = -vz_pre * restitution_coeff
 
         for i in range(b_idx + 1, n_pts):
             t_post = (i - b_idx) * dt
-            z = vz_rebound * t_post - 0.5 * gravity * (t_post ** 2)
-            traj_3d[i, 2] = max(0.0, float(z))
+            z = r + vz_rebound * t_post - 0.5 * gravity * (t_post ** 2)
+            traj_3d[i, 2] = max(r, float(z))
 
         return traj_3d

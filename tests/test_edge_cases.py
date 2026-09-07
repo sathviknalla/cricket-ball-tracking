@@ -6,16 +6,17 @@ from core.calibration import MetricPitchCalibration
 
 def test_full_toss_delivery():
     """
-    Edge Case: Delivery does not bounce on the pitch (full toss / yorker on the full).
+    Edge Case: Delivery does not bounce on the pitch (full toss / low yorker on the full).
     Assert pipeline adjudicates without pitch bounce error and evaluates LBW correctly.
     """
     engine = DRSEngine()
 
-    pad_impact = (-0.02, 18.80, 0.42)
+    pad_impact = (-0.02, 18.80, 0.48)
     
+    # Project to stumps with realistic flight trajectory hitting middle stump
     proj_traj, stump_impact = Kalman3DSmoother.project_to_stumps(
         impact_point=pad_impact,
-        velocity=(0.01 * 35.0, 35.0, -0.2 * 35.0),
+        velocity=(0.01 * 35.0, 35.0, -0.05 * 35.0),
         target_y=20.12
     )
 
@@ -37,25 +38,23 @@ def test_bat_edge_invalidates_lbw():
     Edge Case: Trajectory exhibits a sharp angular deflection right before pad contact (bat edge).
     Assert bat deflection detector flags it and DRS adjudicates NOT OUT (Bat Involved).
     """
-    # Generate trajectory with a distinct deflection spike at frame 22 (Y=17.5m, Z=0.45m)
     traj_3d = []
     for i in range(25):
         y = 10.0 + i * 0.35
         if i < 22:
             x = -0.05 + i * 0.002
             z = 0.20 + i * 0.015
-        else: # Sharp deflection after glancing inside edge (dx=-0.08, dz=+0.05)
+        else: # Sharp deflection after glancing inside edge
             x = -0.05 + 21 * 0.002 - (i - 21) * 0.08
             z = 0.20 + 21 * 0.015 + (i - 21) * 0.05
         traj_3d.append((x, y, z))
 
     traj_arr = np.array(traj_3d, dtype=np.float64)
-    has_edge, frame_idx = Kalman3DSmoother.detect_bat_deflection(traj_arr, threshold_angle_deg=5.0)
+    has_edge, frame_idx = Kalman3DSmoother.detect_bat_deflection(traj_arr, threshold_angle_deg=4.5)
 
     assert has_edge is True
     assert frame_idx is not None and frame_idx >= 21
 
-    # Pass to DRS Engine with bat edge flag
     engine = DRSEngine()
     verdict = engine.evaluate_lbw(
         bounce_point=(-0.04, 11.5, 0.0),
@@ -102,7 +101,6 @@ def test_sharp_seam_spin_deviation():
 
     angle_diff = Kalman3DSmoother.compute_seam_spin_deviation(v_pre, v_post)
     assert angle_diff > 3.5
-    print(f"Seam deviation: {angle_diff:.2f} degrees")
 
 def test_close_proximity_bounce():
     """

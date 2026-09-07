@@ -1,6 +1,7 @@
 ﻿import numpy as np
 from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass
+from config import TrajectoryConfig
 
 @dataclass
 class Kalman3DConfig:
@@ -9,7 +10,7 @@ class Kalman3DConfig:
     process_noise_pos: float = 0.001
     process_noise_vel: float = 0.01
     measurement_noise: float = 0.005
-    drag_coeff: float = 0.004
+    drag_coeff: float = 0.0070  # Aerodynamic drag gamma = 0.5 * rho * Cd * A / m
 
 class Kalman3DSmoother:
     """
@@ -22,29 +23,24 @@ class Kalman3DSmoother:
         self.dt = self.config.dt
         self.g = self.config.gravity
 
-        # State vector: [X, Y, Z, vx, vy, vz]^T
         self.state_dim = 6
         self.meas_dim = 3
         self.x = np.zeros((self.state_dim, 1), dtype=np.float64)
 
-        # Transition matrix F
         self.F = np.eye(self.state_dim, dtype=np.float64)
         self.F[0, 3] = self.dt
         self.F[1, 4] = self.dt
         self.F[2, 5] = self.dt
 
-        # Control input B*u (Gravity along Z)
         self.Bu = np.zeros((self.state_dim, 1), dtype=np.float64)
         self.Bu[2, 0] = -0.5 * self.g * (self.dt ** 2)
         self.Bu[5, 0] = -self.g * self.dt
 
-        # Measurement matrix H
         self.H = np.zeros((self.meas_dim, self.state_dim), dtype=np.float64)
         self.H[0, 0] = 1.0
         self.H[1, 1] = 1.0
         self.H[2, 2] = 1.0
 
-        # Covariances
         self.P = np.eye(self.state_dim, dtype=np.float64) * 0.05
         self.Q = np.eye(self.state_dim, dtype=np.float64)
         self.Q[0, 0] = self.config.process_noise_pos
@@ -69,7 +65,6 @@ class Kalman3DSmoother:
         self.initialized = True
 
     def predict(self) -> Tuple[float, float, float]:
-        """Predicts 3D state forward 1 timestep under gravity."""
         if not self.initialized:
             return (0.0, 0.0, 0.0)
 
@@ -78,7 +73,6 @@ class Kalman3DSmoother:
         return (float(self.x[0, 0]), float(self.x[1, 0]), float(self.x[2, 0]))
 
     def update(self, measurement: Tuple[float, float, float]) -> Tuple[float, float, float]:
-        """Updates Kalman state with 3D metric measurement [X, Y, Z]."""
         z = np.array([[measurement[0]], [measurement[1]], [measurement[2]]], dtype=np.float64)
         if not self.initialized:
             self.init_state(measurement)
@@ -100,10 +94,6 @@ class Kalman3DSmoother:
         self,
         points: List[Optional[Tuple[float, float, float]]]
     ) -> np.ndarray:
-        """
-        Smooths a 3D metric sequence and fills in missing/occluded frames (None entries).
-        Accurately bridges complete occlusions using physics-informed state projection.
-        """
         if not points:
             return np.empty((0, 3), dtype=np.float64)
 
@@ -148,12 +138,6 @@ class Kalman3DSmoother:
         threshold_angle_deg: float = 4.5,
         min_y_check: float = 16.0
     ) -> Tuple[bool, Optional[int]]:
-        """
-        Detects sudden non-gravitational trajectory angle discontinuities / velocity spikes
-        characteristic of an inside or outside bat edge near the batting crease.
-        Returns:
-            (is_bat_edge_detected, deflection_frame_index)
-        """
         if trajectory_3d is None or len(trajectory_3d) < 4:
             return False, None
 
@@ -164,7 +148,6 @@ class Kalman3DSmoother:
             y_pos = trajectory_3d[i, 1]
             z_pos = trajectory_3d[i, 2]
 
-            # Check in the batsman strike zone (Y >= 16.0m and above ground Z > 0.08m)
             if y_pos >= min_y_check and z_pos > 0.08:
                 v1 = vels[i - 1]
                 v2 = vels[i]
@@ -184,9 +167,6 @@ class Kalman3DSmoother:
         pre_bounce_vel: Tuple[float, float, float],
         post_bounce_vel: Tuple[float, float, float]
     ) -> float:
-        """
-        Calculates horizontal trajectory deflection angle (in degrees) off the pitch.
-        """
         vx_pre, vy_pre, _ = pre_bounce_vel
         vx_post, vy_post, _ = post_bounce_vel
 
@@ -201,21 +181,14 @@ class Kalman3DSmoother:
         target_y: float = 20.12,
         fps: float = 30.0,
         gravity: float = 9.81,
-        drag_coeff: float = 0.004
+        drag_coeff: float = 0.0070
     ) -> Tuple[np.ndarray, Tuple[float, float, float]]:
-        """
-        Projects ball trajectory forward from pad impact (X_pad, Y_pad, Z_pad)
-        to the batsman stumps at target_y (20.12m) using numerical integration.
-        Returns:
-            projected_trajectory: (M, 3) numpy array
-            stump_impact_point: (X, 20.12, Z) coordinate at wicket line
-        """
         x, y, z = impact_point
         vx, vy, vz = velocity
         dt = 1.0 / fps
 
         if vy <= 1.0:
-            vy = 30.0  # Fallback speed ~ 108 km/h
+            vy = 30.0
 
         pts = [(x, y, z)]
         while y < target_y:

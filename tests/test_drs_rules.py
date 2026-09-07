@@ -1,14 +1,12 @@
 ﻿import pytest
 from core.drs_engine import DRSEngine, BatsmanHand, OnFieldCall, PitchingZone, ImpactZone, WicketsResult
 
-def test_drs_impact_outside_off():
+def test_drs_impact_outside_off_shot_offered():
     """
-    Test a trajectory where ball impact is 10 cm outside off-stump.
+    Test a trajectory where ball impact is 10 cm outside off-stump with shot offered.
     Assert Impact: OUTSIDE OFF, Decision: NOT OUT.
     """
     engine = DRSEngine()
-    # Stumps half width = 0.1143m, ball radius = 0.036m
-    # 10 cm outside off for RHB => X = -(0.1143 + 0.10) = -0.2143m
     bounce_pt = (-0.05, 12.0, 0.0)
     pad_impact = (-0.2143, 18.8, 0.45)
     stump_impact = (-0.05, 20.12, 0.40)
@@ -18,11 +16,35 @@ def test_drs_impact_outside_off():
         pad_impact_point=pad_impact,
         predicted_stump_point=stump_impact,
         batsman_hand=BatsmanHand.RIGHT_HAND,
-        on_field_call=OnFieldCall.NOT_OUT
+        on_field_call=OnFieldCall.NOT_OUT,
+        shot_offered=True
     )
 
     assert verdict.impact == ImpactZone.OUTSIDE_OFF
     assert verdict.final_verdict == "NOT OUT"
+
+def test_drs_impact_outside_off_no_shot_offered():
+    """
+    Law 36.1(e): If NO shot is offered (padded away), impact outside off is OUT
+    if ball goes on to hit the stumps!
+    """
+    engine = DRSEngine()
+    bounce_pt = (-0.05, 12.0, 0.0)
+    pad_impact = (-0.2143, 18.8, 0.45)
+    stump_impact = (0.0, 20.12, 0.40)  # Hitting middle stump
+
+    verdict = engine.evaluate_lbw(
+        bounce_point=bounce_pt,
+        pad_impact_point=pad_impact,
+        predicted_stump_point=stump_impact,
+        batsman_hand=BatsmanHand.RIGHT_HAND,
+        on_field_call=OnFieldCall.OUT,
+        shot_offered=False  # No shot played
+    )
+
+    assert verdict.impact == ImpactZone.OUTSIDE_OFF
+    assert verdict.wickets == WicketsResult.HITTING
+    assert verdict.final_verdict == "OUT"
 
 def test_drs_wickets_umpires_call_clipping():
     """
@@ -30,8 +52,6 @@ def test_drs_wickets_umpires_call_clipping():
     Assert Wickets: UMPIRE'S CALL.
     """
     engine = DRSEngine()
-    # Stump edge = 0.1143m. Ball center at 0.1143 + 0.015m (1.5 cm past outer edge)
-    # Ball radius = 0.036m, so it overlaps the stump edge by 2.1 cm (> 50% margin)
     bounce_pt = (0.02, 11.5, 0.0)
     pad_impact = (0.05, 18.8, 0.45)
     stump_impact = (-0.1293, 20.12, 0.50)  # Clips off-stump outer margin
@@ -47,7 +67,6 @@ def test_drs_wickets_umpires_call_clipping():
     assert verdict.pitching == PitchingZone.IN_LINE
     assert verdict.impact == ImpactZone.IN_LINE
     assert verdict.wickets == WicketsResult.UMPIRES_CALL
-    # With on-field call OUT, verdict stands as OUT
     assert verdict.final_verdict == "OUT"
 
 def test_drs_pitching_outside_leg():
@@ -56,10 +75,9 @@ def test_drs_pitching_outside_leg():
     Assert Pitching: OUTSIDE LEG, Decision: NOT OUT.
     """
     engine = DRSEngine()
-    # For RHB, leg-side is X > +0.1143m
-    bounce_pt = (0.18, 10.5, 0.0)  # Pitches outside leg
+    bounce_pt = (0.18, 10.5, 0.0)  # Pitches outside leg for RHB
     pad_impact = (0.05, 18.8, 0.45)
-    stump_impact = (0.0, 20.12, 0.35)  # Hitting middle stump
+    stump_impact = (0.0, 20.12, 0.35)
 
     verdict = engine.evaluate_lbw(
         bounce_point=bounce_pt,
