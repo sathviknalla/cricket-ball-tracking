@@ -133,6 +133,8 @@ def run_cli_pipeline(
     print(f"[CLI] Processing video: {input_video} (Threaded={threaded})")
     cap = cv2.VideoCapture(input_video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
 
@@ -140,23 +142,36 @@ def run_cli_pipeline(
     reader = ThreadedVideoReader(input_video).start() if threaded else None
     cap_fallback = cv2.VideoCapture(input_video) if not threaded else None
 
+    out_video_path = os.path.join(output_dir, "tracked_output.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    writer = cv2.VideoWriter(out_video_path, fourcc, fps, (width, height))
+
     frame_idx = 0
     t0 = time.time()
+    last_bounce = None
+    last_history = []
 
     while True:
-        frame = reader.get_frame() if threaded else cap_fallback.read()[1]
+        frame = reader.get_frame() if threaded else (cap_fallback.read()[1] if cap_fallback else None)
         if frame is None:
             break
         frame_idx += 1
         vis_frame, history, bounce = pipeline.process_frame(frame)
+        if bounce:
+            last_bounce = bounce
+        if history:
+            last_history = history
+        writer.write(vis_frame)
         if frame_idx % 30 == 0:
             elapsed = time.time() - t0
-            print(f" -> Processed {frame_idx}/{total_frames} frames ({frame_idx/elapsed:.1f} FPS)...")
+            print(f" -> Processed {frame_idx}/{total_frames} frames ({frame_idx/max(0.01, elapsed):.1f} FPS)...")
 
+    writer.release()
     if cap_fallback:
         cap_fallback.release()
 
     print(f"[CLI] Completed processing {frame_idx} frames.")
+    print(f" -> Tracked Video Saved: {out_video_path}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Hawk-Eye 3D Cricket Ball Tracking & DRS")

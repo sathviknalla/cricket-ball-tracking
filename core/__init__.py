@@ -20,6 +20,18 @@ from .drs_engine import (
     WicketsResult,
 )
 from .visualizer import HawkEyeVisualizer, Plotly3DVisualizer
+from .analytics import (
+    ExpectedDismissalEngine,
+    PitchHeatmapAggregator,
+    DeliverySessionTracker,
+    DeliveryRecord
+)
+from .umpiring import (
+    NoBallDetector,
+    NoBallVerdict,
+    UltraEdgeWaveformSimulator,
+    UltraEdgeType
+)
 
 __all__ = [
     "CricketBallDetector",
@@ -47,4 +59,12 @@ __all__ = [
     "WicketsResult",
     "HawkEyeVisualizer",
     "Plotly3DVisualizer",
+    "ExpectedDismissalEngine",
+    "PitchHeatmapAggregator",
+    "DeliverySessionTracker",
+    "DeliveryRecord",
+    "NoBallDetector",
+    "NoBallVerdict",
+    "UltraEdgeWaveformSimulator",
+    "UltraEdgeType"
 ]

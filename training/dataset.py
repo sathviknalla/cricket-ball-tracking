@@ -23,6 +23,7 @@ class SyntheticCricketBallDataset:
 
         if _HAS_ALBUMENTATIONS:
             self.transform = A.Compose([
+                A.Affine(scale=(0.98, 1.02), translate_percent=(-0.02, 0.02), rotate=(-3, 3), p=0.3, border_mode=cv2.BORDER_CONSTANT),
                 A.MotionBlur(blur_limit=15, p=0.8),
                 A.RandomBrightnessContrast(p=0.5),
                 A.GaussNoise(p=0.4),
